@@ -1,6 +1,7 @@
 import { BLA_IDENTITY } from "../identity.js";
 import { initBlaConfig } from "../core/config.js";
 import { inspectReleaseExposure } from "../core/release-exposure.js";
+import { verifyManifestFile } from "../core/manifest-verify.js";
 import type { ProtectionIntensity } from "../core/types.js";
 import { auditTarget } from "../engine/auditor.js";
 import { protectTarget, resolveProtectOutputPath } from "../engine/protector.js";
@@ -176,6 +177,8 @@ export interface McpEngineHandlers {
   readonly emitCompileTimeNativeHeader: typeof emitCompileTimeNativeHeader;
   readonly runDoctor: typeof runDoctor;
   readonly inspectReleaseExposure: typeof inspectReleaseExposure;
+  /** Optional injection seam for the read-only manifest verifier. */
+  readonly verifyManifestFile?: typeof verifyManifestFile;
   readonly initBlaConfig: typeof initBlaConfig;
 }
 
@@ -189,6 +192,7 @@ const DEFAULT_ENGINE_HANDLERS: McpEngineHandlers = Object.freeze({
   emitCompileTimeNativeHeader,
   runDoctor,
   inspectReleaseExposure,
+  verifyManifestFile,
   initBlaConfig,
 });
 
@@ -659,6 +663,37 @@ export const BLA_MCP_TOOLS: readonly McpToolDefinition[] = Object.freeze([
         },
       },
       required: ["target_path"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bla_verify_manifest",
+    description:
+      "Verifies a .bla-manifest.json signature and, when an artifact path is supplied, its protectedSha256. A pinned public key authenticates the signer; without one the report says pinned:false because it only proves the manifest was signed by the key embedded in it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest_path: {
+          type: "string",
+          description: "Path to the .bla-manifest.json file to verify",
+        },
+        public_key_path: {
+          type: "string",
+          description:
+            "Optional PEM public key to pin the signer. Required for a meaningful authenticity claim.",
+        },
+        artifact_path: {
+          type: "string",
+          description:
+            "Optional protected artifact to check against protectedSha256. Defaults to the manifest's adjacent artifact when present.",
+        },
+        require_pinned_key: {
+          type: "boolean",
+          description:
+            "Refuse (ok:false) when no pinned public key authenticated the manifest. Default false.",
+        },
+      },
+      required: ["manifest_path"],
       additionalProperties: false,
     },
   },
@@ -2282,6 +2317,13 @@ export async function handleMcpRequest(
           } else {
             payload = verification;
           }
+        } else if (name === "bla_verify_manifest") {
+          payload = (handlers.verifyManifestFile ?? verifyManifestFile)(
+            args.manifest_path as string,
+            typeof args.public_key_path === "string" ? args.public_key_path : undefined,
+            typeof args.artifact_path === "string" ? args.artifact_path : undefined,
+            { requirePinnedKey: args.require_pinned_key === true },
+          );
         } else if (name === "bla_benchmark") {
           payload = await handlers.runShowcaseBenchmark();
         } else if (name === "bla_emit_headers") {

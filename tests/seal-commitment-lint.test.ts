@@ -145,3 +145,38 @@ describe("seal-commitment public seed / key-digest exposure (CrackMe v8 red)", (
     expect(ids).not.toContain("public-key-digest-oracle");
   });
 });
+
+describe("seal-commitment oversized sidecars (lint budget)", () => {
+  const padded = (base: Record<string, unknown>): string =>
+    JSON.stringify({ ...base, note: "x".repeat(500_000) });
+
+  it("still lints a reversible seal above the old 400 KB truncation point", () => {
+    const source = padded(ROUND2_SEAL);
+    expect(source.length).toBeGreaterThan(400_000);
+    const r = lintSealCommitmentSource(source, { path: "/tmp/seal.json" });
+    expect(r.looksExposed).toBe(true);
+    expect(r.shouldRefuseBankrupt).toBe(true);
+    expect(r.findings.some((f) => f.id === "reversible-public-commitment")).toBe(true);
+  });
+
+  it("still lints an oversized one-way seal without refusing", () => {
+    const source = padded(ONE_WAY_SEAL);
+    expect(source.length).toBeGreaterThan(400_000);
+    const r = lintSealCommitmentSource(source, { path: "/tmp/seal.json" });
+    expect(r.shouldRefuseBankrupt).toBe(false);
+    expect(r.findings.some((f) => f.id === "reversible-public-commitment")).toBe(false);
+  });
+
+  it("fails closed on an oversized seal that is not JSON and cannot be verified", () => {
+    const r = lintSealCommitmentSource("x".repeat(500_000), { path: "/tmp/seal.json" });
+    expect(r.shouldRefuseBankrupt).toBe(true);
+    expect(r.looksExposed).toBe(true);
+    expect(r.findings.some((f) => f.id === "seal-oversized-sidecar")).toBe(true);
+  });
+
+  it("keeps skipping small non-JSON sidecars", () => {
+    const r = lintSealCommitmentSource("hello", { path: "/tmp/seal.json" });
+    expect(r.shouldRefuseBankrupt).toBe(false);
+    expect(r.findings).toHaveLength(0);
+  });
+});

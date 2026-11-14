@@ -24,7 +24,8 @@ export type SealCommitmentFindingId =
   | "reversible-public-commitment"
   | "seal-offline-oracle-package"
   | "public-materialization-seed"
-  | "public-key-digest-oracle";
+  | "public-key-digest-oracle"
+  | "seal-oversized-sidecar";
 
 export type SealCommitmentSeverity = "warning" | "error";
 
@@ -187,12 +188,31 @@ export function lintSealCommitmentSource(
 ): SealCommitmentReport {
   const pathLabel = options.path ?? "<memory>";
   const findings: SealCommitmentFinding[] = [];
-  const text = source.length > MAX_JSON_BYTES ? source.slice(0, MAX_JSON_BYTES) : source;
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    // Lint the whole sidecar. Truncating before parsing turned any carrier above
+    // MAX_JSON_BYTES into "not JSON", which silently skipped the refusal gate.
+    parsed = JSON.parse(source);
   } catch {
+    if (source.length > MAX_JSON_BYTES) {
+      return {
+        schema: SEAL_COMMITMENT_SCHEMA,
+        path: pathLabel,
+        findings: [
+          finding(
+            "seal-oversized-sidecar",
+            "error",
+            `Seal sidecar exceeds the ${MAX_JSON_BYTES}-byte lint budget and is not valid JSON — refusing without verifying whether the carrier is one-way.`,
+            `bytes=${source.length}`,
+          ),
+        ],
+        looksExposed: true,
+        shouldRefuseBankrupt: true,
+        oneLineAdvice:
+          "ERROR: Oversized seal sidecar could not be linted. Split or encrypt it (one-way digests), or pass allowPlaintextSeal / --allow-plaintext-seal for a lab fixture.",
+      };
+    }
     return {
       schema: SEAL_COMMITMENT_SCHEMA,
       path: pathLabel,

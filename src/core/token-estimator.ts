@@ -33,6 +33,24 @@ const AGENT_MODELS: readonly AgentModelPricing[] = [
 ];
 
 /**
+ * Per-model probability that the cumulative input history of an REA loop
+ * exceeds the model's declared context window. Exposed so the estimate can be
+ * checked against the window it claims to model instead of a fixed constant.
+ */
+export function contextWindowOverflowProbability(
+  cumulativeInputTokens: number,
+  contextWindowTokens: number,
+): number {
+  if (!Number.isFinite(cumulativeInputTokens) || !Number.isFinite(contextWindowTokens)) {
+    return 0.02;
+  }
+  if (contextWindowTokens <= 0) return 0.02;
+  const ratio = Math.max(0, cumulativeInputTokens) / contextWindowTokens;
+  const probability = 1 - Math.exp(-ratio);
+  return Math.min(0.99, Math.max(0.02, Number(probability.toFixed(4))));
+}
+
+/**
  * Models REA's exact investigation workflow:
  * 1. Initial `analyze_javascript_application` / `open_binary` / `inspect_*` summary call
  * 2. Paging `inspect_analysis_view` across modules/functions (`limit: 16`)
@@ -69,7 +87,10 @@ export function estimateAgentReverseEngineeringCosts(
         estimatedMcpToolCalls: totalMcpCalls,
         estimatedWallClockSeconds: Math.round(totalMcpCalls * model.secondsPerMcpRoundtrip),
         estimatedCostUsd: cost,
-        contextWindowOverflowProbability: 0.02,
+        contextWindowOverflowProbability: contextWindowOverflowProbability(
+          cumulativeInputTokens,
+          model.contextWindowTokens,
+        ),
         outcomeVerdict: "TRIVIAL_CLONE",
       };
     });
@@ -110,8 +131,10 @@ export function estimateAgentReverseEngineeringCosts(
       estimatedMcpToolCalls: totalMcpCalls,
       estimatedWallClockSeconds: wallClockSeconds,
       estimatedCostUsd: Math.max(1.5, totalCostUsd),
-      contextWindowOverflowProbability:
-        sim.decoyFunctionsDetectedAsReal >= 10 ? 0.98 : 0.84,
+      contextWindowOverflowProbability: contextWindowOverflowProbability(
+        rawCumulativeInput,
+        model.contextWindowTokens,
+      ),
       outcomeVerdict:
         sim.examinationStatus === "limited" && sim.decoyFunctionsDetectedAsReal >= 8
           ? "AGENT_HALLUCINATION_AND_BANKRUPTCY"

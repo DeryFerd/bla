@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { estimateAgentReverseEngineeringCosts } from "../src/core/token-estimator.js";
+import {
+  contextWindowOverflowProbability,
+  estimateAgentReverseEngineeringCosts,
+} from "../src/core/token-estimator.js";
 import type { ReaSemanticSimulationResult } from "../src/core/types.js";
 
 function unprotectedResult(): ReaSemanticSimulationResult {
@@ -94,6 +97,37 @@ describe("token-estimator", () => {
         "HIGH_FRICTION",
         "AGENT_HALLUCINATION_AND_BANKRUPTCY",
       ]).toContain(e.outcomeVerdict);
+    }
+  });
+});
+
+describe("context-window overflow probability", () => {
+  it("grows with the modelled input history", () => {
+    const small = contextWindowOverflowProbability(20_000, 200_000);
+    const large = contextWindowOverflowProbability(500_000, 200_000);
+    expect(small).toBeGreaterThan(0.02);
+    expect(small).toBeLessThan(0.5);
+    expect(large).toBeGreaterThan(small);
+    expect(large).toBeLessThanOrEqual(0.99);
+  });
+
+  it("uses the model's declared window instead of a fixed constant", () => {
+    expect(contextWindowOverflowProbability(400_000, 200_000)).toBeGreaterThan(
+      contextWindowOverflowProbability(400_000, 1_000_000),
+    );
+  });
+
+  it("stays bounded for tiny histories and invalid windows", () => {
+    expect(contextWindowOverflowProbability(0, 200_000)).toBe(0.02);
+    expect(contextWindowOverflowProbability(1_000, 0)).toBe(0.02);
+    expect(contextWindowOverflowProbability(Number.NaN, 200_000)).toBe(0.02);
+  });
+
+  it("is wired into the shielded estimate", () => {
+    const shielded = estimateAgentReverseEngineeringCosts(shieldedResult(), 10_000);
+    for (const e of shielded) {
+      expect(e.contextWindowOverflowProbability).toBeGreaterThan(0.9);
+      expect(e.contextWindowOverflowProbability).toBeLessThanOrEqual(0.99);
     }
   });
 });

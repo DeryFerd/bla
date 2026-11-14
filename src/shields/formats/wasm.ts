@@ -223,10 +223,13 @@ function appendDecoyExports(
   decoys: readonly { readonly name: string; readonly funcIndex: number }[],
 ): Buffer {
   if (decoys.length === 0) return exportSectionPayload;
-  let p = 0;
-  const { value: count, nextOffset } = decodeUnsignedLeb128(exportSectionPayload, 0);
-  p = nextOffset;
-  const existing = exportSectionPayload.subarray(p);
+  // Defensive: a truncated/invalid export-count LEB128 must not escape as a raw
+  // Error. `parseWasmExportSectionPayload` already treats the same payload as
+  // unparseable, so leave it untouched here as well.
+  const decoded = tryDecodeUnsignedLeb128(exportSectionPayload, 0);
+  if (decoded === null) return exportSectionPayload;
+  const { value: count, nextOffset } = decoded;
+  const existing = exportSectionPayload.subarray(nextOffset);
   const decoyParts: Buffer[] = [];
   for (const d of decoys) {
     decoyParts.push(
